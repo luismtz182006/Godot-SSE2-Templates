@@ -1,0 +1,98 @@
+name: Build SSE2-compatible Windows templates
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-templates.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        godot_version:
+          - 4.5-stable
+          - 4.5.1-stable
+          - 4.5.2-stable
+          - 4.6-stable
+          - 4.6.1-stable
+          - 4.6.2-stable
+          - 4.6.3-stable
+          - 4.7-stable
+          - 4.7.1-stable
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 scons
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
+      - name: Clone Godot ${{ matrix.godot_version }}
+        run: git clone --depth 1 --branch ${{ matrix.godot_version }} https://github.com/godotengine/godot.git
+
+      - name: Patch out the SSE4.2 compiler baseline
+        run: |
+          python3 << 'EOF'
+          path = "godot/SConstruct"
+          s = open(path).read()
+          assert '"-msse4.2"' in s, "SSE4.2 flag not found in ${{ matrix.godot_version }} - Godot's build script may have changed"
+          s = s.replace('"-msse4.2", "-mpopcnt"', '"-msse2"')
+          open(path, "w").write(s)
+          EOF
+
+      - name: Patch out the SSE4.2 startup gate
+        run: |
+          python3 << 'EOF'
+          path = "godot/platform/windows/cpu_feature_validation.c"
+          s = open(path).read()
+          old = "if (win_sse42_supported || cpuid_sse42_supported) {"
+          assert old in s, "startup check not found in ${{ matrix.godot_version }} - Godot's source may have changed"
+          s = s.replace(old, "if (1) {")
+          open(path, "w").write(s)
+          EOF
+
+      - name: Build (release template, x86_64)
+        working-directory: godot
+        run: scons platform=windows target=template_release arch=x86_64 use_mingw=yes d3d12=no -j$(nproc)
+
+      - name: Rename output
+        run: |
+          mkdir -p dist
+          cp "godot/bin/godot.windows.template_release.x86_64.exe" \
+             "dist/godot-${{ matrix.godot_version }}-sse2-windows-x86_64.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-${{ matrix.godot_version }}-sse2-windows-x86_64
+          path: dist/*.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect files
+        run: |
+          mkdir -p release
+          find artifacts -name "*.exe" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "sse2-templates-${{ github.run_number }}" release/*.exe \
+            --repo "${{ github.repository }}" \
+            --title "SSE2-compatible templates — build #${{ github.run_number }}" \
+            --notes "Godot Windows x86_64 export templates compiled without the SSE4.2 requirement Godot has enforced since 4.5.0. One .exe per engine version — grab the one matching the Godot version your project (or the game you're trying to run) was exported with. See the README for usage instructions."
+            
