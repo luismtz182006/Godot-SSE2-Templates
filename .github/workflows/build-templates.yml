@@ -21,6 +21,7 @@ jobs:
           - 4.6.3-stable
           - 4.7-stable
           - 4.7.1-stable
+          - 4.7.2-stable
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
@@ -91,8 +92,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "sse2-templates-${{ github.run_number }}" release/*.exe \
+          gh release delete sse2-templates --yes --cleanup-tag --repo "${{ github.repository }}" || true
+          gh release create sse2-templates release/*.exe \
             --repo "${{ github.repository }}" \
-            --title "SSE2-compatible templates — build #${{ github.run_number }}" \
-            --notes "Godot Windows x86_64 export templates compiled without the SSE4.2 requirement Godot has enforced since 4.5.0. One .exe per engine version — grab the one matching the Godot version your project (or the game you're trying to run) was exported with. See the README for usage instructions."
-            
+            --title "SSE2-compatible templates (latest build)" \
+            --notes "Godot Windows x86_64 export templates compiled without the SSE4.2 requirement Godot has enforced since 4.5.0. One .exe per engine version - grab the one matching the Godot version your project (or the game you're trying to run) was exported with. This release is overwritten on every workflow run, so it always reflects the current version list. See the README for usage instructions."
